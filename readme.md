@@ -52,16 +52,48 @@ PUT /goodread
       "description": { "type": "text" },
       "genres": { "type": "keyword" },
       "url": { "type": "keyword" },
+      "reviews": { "type": "text"}
     }
   }
 }
 ```
 
-6. Proceed to run the **main.py** file after you have pasted in your API Key. This will import data into the index from our output folder.
-7. To view the index, in the search bar at the top, search for "Index Management" and open it.
-8. Click into your index, and click on the "Discover Index" at the top right side to create a viewer in order to view the documents.
-9. Insert any name you want for the viewer, for index patterns, make sure to input the name of your index.
-10. After successful creation of viewer, you can click on Discover Index and it should display the documents.
+6. Install the necessary libraries: (use this version to ensure consistency)
+```bash
+pip install --upgrade elasticsearch==8.13.0 
+```
+7. Proceed to run the **populate_index.py** file after you have pasted in your API Key. This will import data into the index from our output folder.
+8. To view the index, in the search bar at the top, search for "Index Management" and open it.
+9. Click into your index, and click on the "Discover Index" at the top right side to create a viewer in order to view the documents.
+10. Insert any name you want for the viewer, for index patterns, make sure to input the name of your index.
+11. After successful creation of viewer, you can click on Discover Index and it should display the documents.
+
+### Step 3: Setting Up Local Postgres on Docker
+
+1. Run the following:
+```bash
+docker-compose up --build
+```
+This creates a new Postgres docker container and creates the necessary tables which is used to store user information.
+2. You can run the following code to access into the docker database. 
+```bash
+docker exec -it books_postgres psql -U user -d books_db
+```
+Once you are inside the database, you can run your raw SQL queries to view the database.
+
+## The Search Engine (main.py)
+
+### Step 1: Setting up
+
+1. Install the necessary libraries:
+```bash
+pip install psycopg2
+```
+2. Replace the **API Key** and **INDEX_NAME** with your own.
+
+### Step 2: Running the code
+
+1. Run the python file, everything should work as per expected.
 
 ## How the Web Scraper Works (For Reference Only – You Do Not Need to Run This)
 
@@ -87,7 +119,6 @@ The data collection process is divided into three automated scripts:
 4. **`clean_book_data.py`**  
    Cleans and removes the invalid rows in `books_bulk.jsonl`.
    - **Output:** `cleaned_books_bulk.jsonl`
-
 
 
 
