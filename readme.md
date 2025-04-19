@@ -70,16 +70,15 @@ pip install --upgrade elasticsearch==8.13.0
 
 ### Step 3: Setting Up Local Postgres on Docker
 
-1. Run the following:
+1. To creates a new Postgres docker container and also creates the necessary tables which is used to store user information. Run the following:
 ```bash
 docker-compose up --build
 ```
-This creates a new Postgres docker container and creates the necessary tables which is used to store user information.
-2. You can run the following code to access into the docker database. 
+
+2. You can run the following code to access into the docker database. Once you are inside the database, you can run your raw SQL queries to view the database.
 ```bash
 docker exec -it books_postgres psql -U user -d books_db
 ```
-Once you are inside the database, you can run your raw SQL queries to view the database.
 
 ## The Search Engine (main.py)
 
