@@ -8,12 +8,12 @@ from bs4 import BeautifulSoup
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64)"
 }
-BOOK_LINKS_FILE = "./webscraper/output/book_links.txt"
+BOOK_LINKS_FILE = "./webscraper/output/book_links_30k.txt"
 OUTPUT_FILE = "./webscraper/output/books_bulk.jsonl"
 MAX_RETRIES = 2
 RETRY_DELAY = 1.0
 NUM_THREADS = 6
-BATCH_SIZE = 100
+BATCH_SIZE = 50
 
 with open(BOOK_LINKS_FILE, "r", encoding="utf-8") as f:
     urls = [line.strip() for line in f if line.strip()]
@@ -38,13 +38,17 @@ def scrape_book(index, url):
                       for g in soup.find_all("span", class_="BookPageMetadataSection__genreButton")
                       if g.find("span", class_="Button__labelItem")]
             author_tag = soup.find("span", class_="ContributorLink__name", attrs={"data-testid": "name"})
+            review_spans = soup.select("div.TruncatedContent__text span.Formatted")[:3] # get top 3 reviews
+            reviews = [span.get_text(separator="\n").strip()[:200] for span in review_spans if span.get_text(strip=True)] # get first 200 chars in each review
+
 
             book_data = {
                 "title": title.text.strip() if title else "Title not found",
                 "author": author_tag.text.strip() if author_tag else "Author not found",
                 "description": description,
                 "genres": genres,
-                "url": url
+                "url": url,
+                "reviews": reviews
             }
 
             action_line = json.dumps({ "index": { "_index": "books" } })

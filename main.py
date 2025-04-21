@@ -1,41 +1,251 @@
-from elasticsearch import Elasticsearch, helpers
-import json
+from elasticsearch import Elasticsearch
+import psycopg2
+from datetime import datetime
+import hashlib
 
+RELEVENCE_QUERY = 10
+RETRIEVAL_SIZE = 10
+# Elasticsearch config
 es = Elasticsearch(
     "http://localhost:9200",
     api_key="" # INSERT YOUR API KEY HERE
 )
+INDEX_NAME = "test" # CHANGE YOUR INDEX NAME HERE
 
-INPUT_FILE = "./webscraper/output/cleaned_books_bulk.jsonl"
-INDEX_NAME = "test"
+# PostgreSQL config
+conn = psycopg2.connect(
+    dbname="books_db",
+    user="user",
+    password="password",
+    host="localhost",
+    port="5432"
+)
+cursor = conn.cursor()
 
-def generate_bulk_actions(file_path):
-    with open(file_path, "r", encoding="utf-8") as f:
-        while True:
-            action_line = f.readline()
-            if not action_line:
-                break  # EOF
-            doc_line = f.readline()
-            if not doc_line:
-                break  # Incomplete pair
+USER_ID = None
 
-            try:
-                action = json.loads(action_line)
-                doc = json.loads(doc_line)
-                yield {
-                    "_index": INDEX_NAME,
-                    "_source": doc
-                }
-            except json.JSONDecodeError:
-                continue  # Skip malformed entries
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
-helpers.bulk(es, generate_bulk_actions(INPUT_FILE))
+def register():
+    print("\n====================================================")
+    print("|                Register an Account               |")
+    print("====================================================")
+    username = input("Username: ").strip()
+    password = input("Password: ").strip()
+    hashed = hash_password(password)
+
+    try:
+        cursor.execute("INSERT INTO users (username, password) VALUES (%s, %s)", (username, hashed))
+        conn.commit()
+        print("Registration successful. You can now log in.")
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        print("Username already exists. Try a different one.")
+
+def login():
+    global USER_ID
+    print("\n====================================================")
+    print("|                      Login                       |")
+    print("====================================================")
+    username = input("Username: ").strip()
+    password = input("Password: ").strip()
+    hashed = hash_password(password)
+
+    cursor.execute("SELECT id FROM users WHERE username = %s AND password = %s", (username, hashed))
+    result = cursor.fetchone()
+
+    if result:
+        USER_ID = result[0]
+        print(f"Login successful. Welcome back, {username}.")
+        return True
+    else:
+        print("Invalid username or password.")
+        return False
 
 
+def book_exists(title):
+    res = es.search(index=INDEX_NAME, query={"match": {"title": title}}, size=1)
+    return bool(res["hits"]["hits"])
 
-""" res = es.search(index="goodread", query={"match_all": {}})
-print(res["hits"]["hits"]) """
+def generic_search(query_text):
+    res = es.search(
+        index=INDEX_NAME,
+        query={
+            "multi_match": {
+                "query": query_text,
+                "fields": ["title", "author", "description"],
+                "type": "best_fields"
+            }
+        },
+        size=RETRIEVAL_SIZE
+    )
+    hits = res["hits"]["hits"]
+    if hits:
+        print("\n====================================================")
+        print("|                Generic Search Results            |")
+        print("====================================================")
+        for i, hit in enumerate(hits, 1):
+            print(f"{i}. {hit['_source'].get('title', 'No Title')} by {hit['_source'].get('author', 'Unknown Author')}")
+        log_search_query(USER_ID, f"[generic] {query_text}")
+    else:
+        print("No results found for that query.")
 
-res = es.search(index=INDEX_NAME, query={"match_all": {}}, size=5)
-for hit in res["hits"]["hits"]:
-    print(hit["_source"])
+def search_book(title):
+    res = es.search(index=INDEX_NAME, query={"match": {"title": title}}, size=RETRIEVAL_SIZE)
+    hits = res["hits"]["hits"]
+    if hits:
+        print("\n====================================================")
+        print("|                  Search Results                  |")
+        print("====================================================")
+        for i, hit in enumerate(hits, 1):
+            print(f"{i}. {hit['_source'].get('title', 'No Title')} by {hit['_source'].get('author', 'Unknown Author')}")
+        log_search_query(USER_ID, title)
+    else:
+        print("No results found for that title.")
+
+def search_by_description_keyword(keyword):
+    res = es.search(index=INDEX_NAME, query={"match": {"description": keyword}}, size=RETRIEVAL_SIZE)
+    hits = res["hits"]["hits"]
+    if hits:
+        print("\n====================================================")
+        print("|      Books Matching Description or Review        |")
+        print("====================================================")
+        for i, hit in enumerate(hits, 1):
+            print(f"{i}. {hit['_source'].get('title', 'No Title')}")
+        log_search_query(USER_ID, f"[desc] {keyword}")
+    else:
+        print("No books found with that word in the description.")
+
+def search_by_author(author_name):
+    res = es.search(index=INDEX_NAME, query={"match": {"author": author_name}}, size=RETRIEVAL_SIZE)
+    hits = res["hits"]["hits"]
+    if hits:
+        print("\n====================================================")
+        print("|                 Books by Author                  |")
+        print("====================================================")
+        for i, hit in enumerate(hits, 1):
+            print(f"{i}. {hit['_source'].get('title', 'No Title')} by {hit['_source'].get('author')}")
+        log_search_query(USER_ID, f"[author] {author_name}")
+    else:
+        print("No books found by that author.")
+
+def add_read_book(title):
+    if book_exists(title):
+        log_read_book(USER_ID, title)
+        print(f"'{title}' has been added to your read books list.")
+    else:
+        print(f"Book titled '{title}' not found in the database.")
+
+def log_read_book(user_id, title):
+    cursor.execute("INSERT INTO books_read (user_id, title) VALUES (%s, %s)", (user_id, title))
+    conn.commit()
+
+def log_search_query(user_id, query):
+    cursor.execute("SELECT COUNT(*) FROM search_queries WHERE user_id = %s", (user_id,))
+    (count,) = cursor.fetchone()
+
+    if count >= RELEVENCE_QUERY:
+        cursor.execute("""
+            DELETE FROM search_queries
+            WHERE id = (
+                SELECT id FROM search_queries
+                WHERE user_id = %s
+                ORDER BY timestamp ASC
+                LIMIT 1
+            )
+        """, (user_id,))
+
+    cursor.execute("INSERT INTO search_queries (user_id, query) VALUES (%s, %s)", (user_id, query))
+    conn.commit()
+
+def retrieve_user_information(user_id):
+    cursor.execute("SELECT title, timestamp FROM books_read WHERE user_id = %s ORDER BY timestamp DESC", (USER_ID,))
+    read_books_rows = cursor.fetchall()
+    cursor.execute("SELECT * FROM search_queries WHERE user_id = %s", (user_id,))
+    past_queries_rows = cursor.fetchall()
+    user_info = {
+        "read_books": [
+            {"title": title, "timestamp": timestamp.strftime('%Y-%m-%d %H:%M')}
+            for title, timestamp in read_books_rows
+        ],
+        "search_queries": [
+            {"query": query, "timestamp": timestamp.strftime('%Y-%m-%d %H:%M')}
+            for query, timestamp in past_queries_rows
+        ]
+    }
+    print(user_info)
+    return user_info
+
+def view_read_books(user_id):
+    cursor.execute("SELECT title, timestamp FROM books_read WHERE user_id = %s ORDER BY timestamp DESC", (user_id,))
+    rows = cursor.fetchall()
+    if rows:
+        print("\n====================================================")
+        print("|                  Your Read Books                  |")
+        print("====================================================")
+        for i, (title, timestamp) in enumerate(rows, 1):
+            print(f"{i}. {title} (added on {timestamp.strftime('%Y-%m-%d %H:%M')})")
+    else:
+        print("You have not added any books yet.")
+
+def user_menu():
+    while True:
+        print("\n====================================================")
+        print("|                      Menu                        |")
+        print("====================================================")
+        print("1. Generic search")
+        print("2. Search for a book by title")
+        print("3. Search for a keyword in description or reviews")
+        print("4. Search by author name")
+        print("5. Add a book you've read")
+        print("6. View your read books")
+        print("7. Logout")
+        choice = input("Enter your choice (1-6): ").strip()
+
+        if choice == "1":
+            keyword = input("Generic search: ").strip()
+            generic_search(keyword)
+        if choice == "2":
+            title = input("Enter the book title to search: ").strip()
+            search_book(title)
+        elif choice == "3":
+            keyword = input("Enter a keyword to search in book descriptions and reviews: ").strip()
+            search_by_description_keyword(keyword)
+        elif choice == "4":
+            author = input("Enter the author's name: ").strip()
+            search_by_author(author)
+        elif choice == "5":
+            title = input("Enter the title of the book you read: ").strip()
+            add_read_book(title)
+        elif choice == "6":
+            view_read_books(USER_ID)
+            print(retrieve_user_information)
+        elif choice == "7":
+            print("Logging out...\n")
+            break
+        else:
+            print("Invalid choice. Please enter a number from 1 to 6.")
+
+def main():
+    while True:
+        print("\n====================================================")
+        print("|              Welcome to Book Tracker             |")
+        print("====================================================")
+        print("1. Login")
+        print("2. Register")
+        print("3. Quit")
+        choice = input("Select an option (1-3): ").strip()
+
+        if choice == "1" and login():
+            user_menu()
+        elif choice == "2":
+            register()
+        elif choice == "3":
+            print("Exiting program...")
+            break
+        else:
+            print("Invalid option. Please choose 1, 2, or 3.")
+
+if __name__ == "__main__":
+    main()
