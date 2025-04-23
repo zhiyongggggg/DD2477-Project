@@ -8,7 +8,7 @@ RETRIEVAL_SIZE = 10
 # Elasticsearch config
 es = Elasticsearch(
     "http://localhost:9200",
-    api_key="" # INSERT YOUR API KEY HERE
+    api_key="dkpKeVlwWUJJZTRQRk40S2pmMnM6UGlEQkJrcF93eVRHd0pSYnRaY1pUZw=="
 )
 INDEX_NAME = "test" # CHANGE YOUR INDEX NAME HERE
 
@@ -17,7 +17,7 @@ conn = psycopg2.connect(
     dbname="books_db",
     user="user",
     password="password",
-    host="localhost",
+    host="127.0.0.1",
     port="5432"
 )
 cursor = conn.cursor()
@@ -69,17 +69,34 @@ def book_exists(title):
     return bool(res["hits"]["hits"])
 
 def generic_search(query_text):
+
+    cursor.execute("SELECT query FROM search_history WHERE user_id = %s ORDER BY timestamp DESC LIMIT 5", (USER_ID,))
+    past_queries = cursor.fetchall()
+
+
+    term_frequency = calculate_term_frequency(query_text, past_queries)
+
+
+    query = {
+        "multi_match": {
+            "query": query_text,  
+            "fields": ["title^2", "author^1.5", "description^1"],  
+            "type": "best_fields"
+        }
+    }
+
+
+    for term, freq in term_frequency.items():
+        if freq > 0:
+            query["multi_match"]["fields"].append(f"title^{freq * 1.5}")  
+
+
     res = es.search(
         index=INDEX_NAME,
-        query={
-            "multi_match": {
-                "query": query_text,
-                "fields": ["title", "author", "description"],
-                "type": "best_fields"
-            }
-        },
+        query=query,
         size=RETRIEVAL_SIZE
     )
+
     hits = res["hits"]["hits"]
     if hits:
         print("\n====================================================")
@@ -142,7 +159,7 @@ def log_read_book(user_id, title):
     conn.commit()
 
 def log_search_query(user_id, query):
-    cursor.execute("SELECT COUNT(*) FROM search_queries WHERE user_id = %s", (user_id,))
+    cursor.execute("SELECT COUNT(*) FROM search_queries WHERE user_id::int = %s", (user_id,))
     (count,) = cursor.fetchone()
 
     if count >= RELEVENCE_QUERY:
@@ -220,12 +237,47 @@ def user_menu():
             add_read_book(title)
         elif choice == "6":
             view_read_books(USER_ID)
-            print(retrieve_user_information)
+            print(retrieve_user_information(USER_ID))
         elif choice == "7":
             print("Logging out...\n")
             break
         else:
             print("Invalid choice. Please enter a number from 1 to 6.")
+
+def calculate_term_frequency(current_query, past_queries):
+    current_terms = set(current_query.lower().split())
+    term_frequency = {}
+
+
+    for query in past_queries:
+        past_terms = set(query[0].lower().split())  
+        common_terms = current_terms.intersection(past_terms)  
+
+     
+        for term in common_terms:
+            if term in term_frequency:
+                term_frequency[term] += 1
+            else:
+                term_frequency[term] = 1
+
+    return term_frequency
+
+
+def fetch_user_search_history(user_id):
+    cursor.execute("SELECT query FROM search_history WHERE user_id = %s ORDER BY timestamp DESC LIMIT 5", (user_id,))
+    return cursor.fetchall()
+
+
+def log_search_query(user_id, query):
+    print(f"Logging query: {query} for user {user_id}")  
+    cursor.execute("""
+        INSERT INTO search_history (user_id, query)
+        VALUES (%s, %s)
+    """, (user_id, query))
+    conn.commit()
+
+
+    
 
 def main():
     while True:
