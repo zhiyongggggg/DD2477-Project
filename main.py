@@ -3,14 +3,16 @@ import psycopg2
 from datetime import datetime
 import hashlib
 
-RELEVENCE_QUERY = 10
+# Constants
 RETRIEVAL_SIZE = 10
+INDEX_NAME = "test" # CHANGE YOUR INDEX NAME HERE
+USER_ID = None
+
 # Elasticsearch config
 es = Elasticsearch(
     "http://localhost:9200",
     api_key="dkpKeVlwWUJJZTRQRk40S2pmMnM6UGlEQkJrcF93eVRHd0pSYnRaY1pUZw=="
 )
-INDEX_NAME = "test" # CHANGE YOUR INDEX NAME HERE
 
 # PostgreSQL config
 conn = psycopg2.connect(
@@ -22,60 +24,33 @@ conn = psycopg2.connect(
 )
 cursor = conn.cursor()
 
-USER_ID = None
 
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
-
-def register():
-    print("\n====================================================")
-    print("|                Register an Account               |")
-    print("====================================================")
-    username = input("Username: ").strip()
-    password = input("Password: ").strip()
-    hashed = hash_password(password)
-
-    try:
-        cursor.execute("INSERT INTO users (username, password) VALUES (%s, %s)", (username, hashed))
-        conn.commit()
-        print("Registration successful. You can now log in.")
-    except psycopg2.errors.UniqueViolation:
-        conn.rollback()
-        print("Username already exists. Try a different one.")
-
-def login():
-    global USER_ID
-    print("\n====================================================")
-    print("|                      Login                       |")
-    print("====================================================")
-    username = input("Username: ").strip()
-    password = input("Password: ").strip()
-    hashed = hash_password(password)
-
-    cursor.execute("SELECT id FROM users WHERE username = %s AND password = %s", (username, hashed))
-    result = cursor.fetchone()
-
-    if result:
-        USER_ID = result[0]
-        print(f"Login successful. Welcome back, {username}.")
-        return True
-    else:
-        print("Invalid username or password.")
-        return False
+"""
+    Searches
+"""
+def calculate_term_frequency(current_query, past_queries):
+    current_terms = set(current_query.lower().split())
+    term_frequency = {}
 
 
-def book_exists(title):
-    res = es.search(index=INDEX_NAME, query={"match": {"title": title}}, size=1)
-    return bool(res["hits"]["hits"])
+    for query in past_queries:
+        past_terms = set(query[0].lower().split())  
+        common_terms = current_terms.intersection(past_terms)  
+
+     
+        for term in common_terms:
+            if term in term_frequency:
+                term_frequency[term] += 1
+            else:
+                term_frequency[term] = 1
+
+    return term_frequency
 
 def generic_search(query_text):
-
     cursor.execute("SELECT query FROM search_history WHERE user_id = %s ORDER BY timestamp DESC LIMIT 5", (USER_ID,))
     past_queries = cursor.fetchall()
 
-
     term_frequency = calculate_term_frequency(query_text, past_queries)
-
 
     query = {
         "multi_match": {
@@ -85,11 +60,9 @@ def generic_search(query_text):
         }
     }
 
-
     for term, freq in term_frequency.items():
         if freq > 0:
             query["multi_match"]["fields"].append(f"title^{freq * 1.5}")  
-
 
     res = es.search(
         index=INDEX_NAME,
@@ -147,39 +120,40 @@ def search_by_author(author_name):
     else:
         print("No books found by that author.")
 
+
+
+"""
+    Adding into Database
+"""
+def book_exists(title):
+    res = es.search(index=INDEX_NAME, query={"match": {"title": title}}, size=1)
+    return bool(res["hits"]["hits"])
+
 def add_read_book(title):
     if book_exists(title):
-        log_read_book(USER_ID, title)
+        cursor.execute("INSERT INTO books_read (user_id, title) VALUES (%s, %s)", (USER_ID, title))
+        conn.commit()
         print(f"'{title}' has been added to your read books list.")
     else:
         print(f"Book titled '{title}' not found in the database.")
 
-def log_read_book(user_id, title):
-    cursor.execute("INSERT INTO books_read (user_id, title) VALUES (%s, %s)", (user_id, title))
-    conn.commit()
-
 def log_search_query(user_id, query):
-    cursor.execute("SELECT COUNT(*) FROM search_queries WHERE user_id::int = %s", (user_id,))
-    (count,) = cursor.fetchone()
-
-    if count >= RELEVENCE_QUERY:
-        cursor.execute("""
-            DELETE FROM search_queries
-            WHERE id = (
-                SELECT id FROM search_queries
-                WHERE user_id = %s
-                ORDER BY timestamp ASC
-                LIMIT 1
-            )
-        """, (user_id,))
-
-    cursor.execute("INSERT INTO search_queries (user_id, query) VALUES (%s, %s)", (user_id, query))
+    print(f"Logging query: {query} for user {user_id}")  
+    cursor.execute("""
+        INSERT INTO search_history (user_id, query)
+        VALUES (%s, %s)
+    """, (user_id, query))
     conn.commit()
 
+
+
+"""
+    Retrieving Information from Database
+"""
 def retrieve_user_information(user_id):
     cursor.execute("SELECT title, timestamp FROM books_read WHERE user_id = %s ORDER BY timestamp DESC", (USER_ID,))
     read_books_rows = cursor.fetchall()
-    cursor.execute("SELECT * FROM search_queries WHERE user_id = %s", (user_id,))
+    cursor.execute("SELECT * FROM search_history WHERE user_id = %s", (user_id,))
     past_queries_rows = cursor.fetchall()
     user_info = {
         "read_books": [
@@ -193,6 +167,55 @@ def retrieve_user_information(user_id):
     }
     print(user_info)
     return user_info
+
+def fetch_user_search_history(user_id):
+    cursor.execute("SELECT query FROM search_history WHERE user_id = %s ORDER BY timestamp DESC LIMIT 5", (user_id,))
+    return cursor.fetchall()
+
+
+
+
+"""
+    Menu Options
+"""
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def register():
+    print("\n====================================================")
+    print("|                Register an Account               |")
+    print("====================================================")
+    username = input("Username: ").strip()
+    password = input("Password: ").strip()
+    hashed = hash_password(password)
+
+    try:
+        cursor.execute("INSERT INTO users (username, password) VALUES (%s, %s)", (username, hashed))
+        conn.commit()
+        print("Registration successful. You can now log in.")
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        print("Username already exists. Try a different one.")
+
+def login():
+    global USER_ID
+    print("\n====================================================")
+    print("|                      Login                       |")
+    print("====================================================")
+    username = input("Username: ").strip()
+    password = input("Password: ").strip()
+    hashed = hash_password(password)
+
+    cursor.execute("SELECT id FROM users WHERE username = %s AND password = %s", (username, hashed))
+    result = cursor.fetchone()
+
+    if result:
+        USER_ID = result[0]
+        print(f"Login successful. Welcome back, {username}.")
+        return True
+    else:
+        print("Invalid username or password.")
+        return False
 
 def view_read_books(user_id):
     cursor.execute("SELECT title, timestamp FROM books_read WHERE user_id = %s ORDER BY timestamp DESC", (user_id,))
@@ -242,42 +265,7 @@ def user_menu():
             print("Logging out...\n")
             break
         else:
-            print("Invalid choice. Please enter a number from 1 to 6.")
-
-def calculate_term_frequency(current_query, past_queries):
-    current_terms = set(current_query.lower().split())
-    term_frequency = {}
-
-
-    for query in past_queries:
-        past_terms = set(query[0].lower().split())  
-        common_terms = current_terms.intersection(past_terms)  
-
-     
-        for term in common_terms:
-            if term in term_frequency:
-                term_frequency[term] += 1
-            else:
-                term_frequency[term] = 1
-
-    return term_frequency
-
-
-def fetch_user_search_history(user_id):
-    cursor.execute("SELECT query FROM search_history WHERE user_id = %s ORDER BY timestamp DESC LIMIT 5", (user_id,))
-    return cursor.fetchall()
-
-
-def log_search_query(user_id, query):
-    print(f"Logging query: {query} for user {user_id}")  
-    cursor.execute("""
-        INSERT INTO search_history (user_id, query)
-        VALUES (%s, %s)
-    """, (user_id, query))
-    conn.commit()
-
-
-    
+            print("Invalid choice. Please enter a number from 1 to 6.")    
 
 def main():
     while True:

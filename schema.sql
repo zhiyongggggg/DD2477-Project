@@ -11,13 +11,6 @@ CREATE TABLE IF NOT EXISTS books_read (
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS search_queries (
-    id SERIAL PRIMARY KEY,
-    user_id TEXT,
-    query TEXT,
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
 CREATE TABLE search_history (
     id SERIAL PRIMARY KEY,               
     user_id INTEGER NOT NULL,            
