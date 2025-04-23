@@ -17,3 +17,10 @@ CREATE TABLE IF NOT EXISTS search_queries (
     query TEXT,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE search_history (
+    id SERIAL PRIMARY KEY,               
+    user_id INTEGER NOT NULL,            
+    query TEXT NOT NULL,                 
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP 
+);
