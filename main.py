@@ -1,17 +1,22 @@
-from elasticsearch import Elasticsearch
+from elasticsearch import Elasticsearch, helpers
 import psycopg2
 from datetime import datetime
 import hashlib
+import json
+import scoring_algorithm
+from Query import Query
 
 # Constants
 RETRIEVAL_SIZE = 10
-INDEX_NAME = "test" # CHANGE YOUR INDEX NAME HERE
+INDEX_NAME = "books_30k" # CHANGE YOUR INDEX NAME HERE
 USER_ID = None
+INPUT_FILE = "cleaned_books_bulk_30k.jsonl"
+
 
 # Elasticsearch config
 es = Elasticsearch(
     "http://localhost:9200",
-    api_key="dkpKeVlwWUJJZTRQRk40S2pmMnM6UGlEQkJrcF93eVRHd0pSYnRaY1pUZw=="
+    api_key="Z0oyUlE1WUJ0N1duRy1Jd2VLTG86VjB6RkVCazBTSkZXSHd1NTAzbWo1dw=="
 )
 
 # PostgreSQL config
@@ -287,5 +292,74 @@ def main():
         else:
             print("Invalid option. Please choose 1, 2, or 3.")
 
+def generate_bulk_actions(file_path):
+    with open(file_path, "r", encoding="utf-8") as f:
+        while True:
+            action_line = f.readline()
+            if not action_line:
+                break  # EOF
+            doc_line = f.readline()
+            if not doc_line:
+                break  # Incomplete pair
+            try:
+                action = json.loads(action_line)
+                doc = json.loads(doc_line)
+                yield {
+                    "_index": INDEX_NAME,
+                    "_source": doc
+                }
+            except json.JSONDecodeError:
+                continue  # Skip malformed entries
+
+
+
+def isDataBase(INPUT_FILE, INDEX_NAME):
+    if not es.indices.exists(index=INDEX_NAME):
+        print(f"Creating index '{INDEX_NAME}'...")
+        helpers.bulk(es, generate_bulk_actions(INPUT_FILE))
+        print(f"Index {INDEX_NAME} created and documents uploaded")
+    else:
+        print(f"Index {INDEX_NAME} already exists. Skipping bulp upload")
+
+
 if __name__ == "__main__":
-    main()
+    # Make sure the input file in docker exists
+    isDataBase(INPUT_FILE, INDEX_NAME)
+
+    # Test the current ranking algorithm
+    queryText = 'zombie'
+    queryElastic = Query(queryText)
+
+    # First we let Elastic Search use its scoring system "BM25" and get the highest ranked 30 results
+    res = es.search(index=INDEX_NAME, body=queryElastic.getQuery(), size=30)
+    docs = []
+
+    # We save this results on an list
+    for hit in res["hits"]["hits"]:
+        docs.append(hit["_source"])
+        print(f"{hit['_source']['title']} has the score {hit['_score']:.4f}")
+
+    # Then we perform cosine similarity in between the queryText and all the highest ranked documents
+    # The final 'similar' variable is already sorted
+    similar = scoring_algorithm.semanticScore(queryText,docs)
+    print("''''''''''''''''''''''''''''''''''''''''")
+
+    # We print the sorted results
+    for sim, score in similar:
+        print(f"The title '{sim['title']}' received a score of {score}")
+
+
+    #main()
+
+
+"""
+Things to implement
+    
+Must do:
+    * Incorporate the historical index scoring with the score of the user's input
+    * Incorporate reviews into the searching terms (that can be done in the querying file 'NumericalFieldRanking')
+Should do:
+    * 
+Nice to do:
+    * GUI for the project
+    """
