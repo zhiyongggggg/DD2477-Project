@@ -13,29 +13,47 @@ import json
 class Query:
 
     # Initializing query structure
-    def __init__(self, title, numericFieldRanking):
+    def __init__(self, title, numericFieldRanking=None):
         self.title = title
         self.query = dict()
-        self.createQuery()
         self.numericFieldRanking = numericFieldRanking
         self.factorNumericField = 1
+        self.missingDocVal = 1
+        self.createQuery()
     
     def createQuery(self):
-        self.query = {
-            "query": {
-                "function_score":{
-                    "query":{
-                        "match": {
-                            "title": self.title
+        if self.numericFieldRanking == None:
+            self.query = {
+                "query": {
+                    "function_score":{
+                        "query":{
+                            "match": {
+                                "title": self.title
+                            }
                         }
-                    },
-                    "field_value_factor":{
-                        "field": self.numericFieldRanking,
-                        "factor": self.factorNumericField,
                     }
                 }
             }
-        }
+        else:
+            self.query = {
+                "query": {
+                    "function_score":{
+                        "query":{
+                            "match": {
+                                "title": self.title,
+                                "content": self.title
+                            }
+                        },
+                        "field_value_factor":{
+                            "field": self.numericFieldRanking,
+                            "factor": self.factorNumericField,
+                            "modifier": "sqrt",
+                            "missing": self.missingDocVal
+                        },
+                        "boost_mode": "multiply"
+                    }
+                }
+            }
 
     def printQuery(self):
         print(self.query)
