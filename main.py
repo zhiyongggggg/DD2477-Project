@@ -5,6 +5,7 @@ import hashlib
 import json
 import scoring_algorithm
 from Query import Query
+import re
 
 # Constants
 RETRIEVAL_SIZE = 10
@@ -53,10 +54,44 @@ def calculate_term_frequency(current_query, past_queries):
 
 def generic_search(query_text):
     cursor.execute("SELECT query FROM search_history WHERE user_id = %s ORDER BY timestamp DESC LIMIT 5", (USER_ID,))
-    past_queries = cursor.fetchall()
+    rows = cursor.fetchall()
 
+    # Start of the block that takes historical data into the query
+    past_queries_raw = [row[0] for row in rows]
+    tag_pattern = re.compile(r'^\[(?:generic|author|title|desc)\]\s*')
+    past_queries = [tag_pattern.sub("", tag) for tag in past_queries_raw]
+
+    historical_text = " ".join(past_queries)
+
+    es_query = {
+      "bool": {
+        "should": [
+          {   # current query — full weight
+            "multi_match": {
+              "query":   query_text,
+              "fields":  ["title^2","author^1.5","description^1"],
+              "type":    "best_fields",
+              "tie_breaker": 0.3,
+              "boost":   1.0
+            }
+          },
+          {   # only past queries — half weight
+            "multi_match": {
+              "query":  historical_text,
+              "fields": ["title^1","author^0.75","description^0.5"],
+              "type":   "best_fields",
+              "tie_breaker": 0.3,
+              "boost":  1.0
+            }
+          }
+        ]
+      }
+    }
+    # End of historical data to query block
+
+    """
     term_frequency = calculate_term_frequency(query_text, past_queries)
-
+    
     query = {
         "multi_match": {
             "query": query_text,  
@@ -67,11 +102,14 @@ def generic_search(query_text):
 
     for term, freq in term_frequency.items():
         if freq > 0:
-            query["multi_match"]["fields"].append(f"title^{freq * 1.5}")  
+            query["multi_match"]["fields"].append(f"title^{freq * 1.5}")
 
+    """
+
+    print("TOKENS FROM SEARCH HISTORY:", historical_text)
     res = es.search(
         index=INDEX_NAME,
-        query=query,
+        query=es_query,
         size=RETRIEVAL_SIZE
     )
 
