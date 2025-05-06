@@ -80,15 +80,16 @@ docker-compose up --build
 docker exec -it books_postgres psql -U user -d books_db
 ```
 
-## The Search Engine (main.py)
+## The Search Engine (populate_index.py and main.py)
 
-### Step 1: Setting up
+### Step 1: Setting Up and Populating Index
 
 1. Install the necessary libraries:
 ```bash
 pip install psycopg2
 ```
 2. Replace the **API Key** and **INDEX_NAME** with your own.
+3. Run the **populate_index.py** code, this will populate the index with the metadatas. (Make sure to only execute this code once or there will be duplicate entries in the Index)
 
 ### Step 2: Running the code
 
