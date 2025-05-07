@@ -3,11 +3,11 @@ import json
 
 es = Elasticsearch(
     "http://localhost:9200",
-    api_key="" # INSERT YOUR API KEY HERE
+    api_key="Y25wVmdaWUJkODhDUmtTa0l0OXQ6RTNrVDdiVl9SYldHdmFLaUVtdkMzZw==" # REPLACE HERE
 )
 
 INPUT_FILE = "./webscraper/output/cleaned_books_bulk_30k.jsonl"
-INDEX_NAME = "goodread" # CHANGE YOUR INDEX NAME HERE
+INDEX_NAME = "goodread"
 
 def generate_bulk_actions(file_path):
     with open(file_path, "r", encoding="utf-8") as f:

@@ -9,7 +9,8 @@ import re
 
 # Constants
 RETRIEVAL_SIZE = 40
-INDEX_NAME = "books_30k" # CHANGE YOUR INDEX NAME HERE
+INDEX_NAME = "goodread" # REPLACE HERE
+#INDEX_NAME = "books_30k"
 USER_ID = None
 INPUT_FILE = "cleaned_books_bulk_30k.jsonl"
 
@@ -17,7 +18,8 @@ INPUT_FILE = "cleaned_books_bulk_30k.jsonl"
 # Elasticsearch config
 es = Elasticsearch(
     "http://localhost:9200",
-    api_key="Z0oyUlE1WUJ0N1duRy1Jd2VLTG86VjB6RkVCazBTSkZXSHd1NTAzbWo1dw=="
+    api_key="Y25wVmdaWUJkODhDUmtTa0l0OXQ6RTNrVDdiVl9SYldHdmFLaUVtdkMzZw==" # REPLACE HERE
+    #api_key="Z0oyUlE1WUJ0N1duRy1Jd2VLTG86VjB6RkVCazBTSkZXSHd1NTAzbWo1dw==" 
 )
 
 # PostgreSQL config
