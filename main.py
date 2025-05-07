@@ -91,7 +91,7 @@ def generic_search(query_text, sia):
               "boost":  1.0
             }
           }
-    if historic:
+    if historic_flag:
         es_query['bool']['should'].append(historic)
     # End of historical data to query block
 
