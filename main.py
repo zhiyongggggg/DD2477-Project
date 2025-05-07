@@ -8,7 +8,7 @@ from Query import Query
 import re
 
 # Constants
-RETRIEVAL_SIZE = 10
+RETRIEVAL_SIZE = 40
 INDEX_NAME = "books_30k" # CHANGE YOUR INDEX NAME HERE
 USER_ID = None
 INPUT_FILE = "cleaned_books_bulk_30k.jsonl"
@@ -55,6 +55,7 @@ def generic_search(query_text, sia):
 
     reviews_flag = True
     historic_flag = True
+    read_books_flag = True 
 
     cursor.execute("SELECT query FROM search_history WHERE user_id = %s ORDER BY timestamp DESC LIMIT 5", (USER_ID,))
     rows = cursor.fetchall()
@@ -66,6 +67,17 @@ def generic_search(query_text, sia):
 
     historical_text = " ".join(past_queries)
 
+    # Get read books
+    book_genres = set()
+    cursor.execute("SELECT title FROM books_read WHERE user_id = %s", (str(USER_ID),))
+    read_rows = cursor.fetchall()
+    read_books = [row[0] for row in read_rows]
+    for b in read_books:
+        current_book_genre = get_book_genre(b)
+        for genre in current_book_genre:
+            book_genres.add(genre)
+    read_books_genres = " ".join(book_genres)
+    
     es_query = {
       "bool": {
         "should": [
@@ -82,18 +94,27 @@ def generic_search(query_text, sia):
       }
     }
 
-    historic = {   # only past queries — half weight
+    if historic_flag and historical_text.strip():
+        es_query["bool"]["should"].append({
             "multi_match": {
-              "query":  historical_text,
-              "fields": ["title^1","author^0.75","description^0.5"],
-              "type":   "best_fields",
-              "tie_breaker": 0.3,
-              "boost":  1.0
+                "query": historical_text,
+                "fields": ["title^1.5", "author^1.125", "description^0.75"],
+                "type": "best_fields",
+                "tie_breaker": 0.3,
+                "boost": 1.0
             }
-          }
-    if historic_flag:
-        es_query['bool']['should'].append(historic)
-    # End of historical data to query block
+        })
+
+    if read_books_flag and read_books_genres.strip():
+        es_query["bool"]["should"].append({
+            "multi_match": {
+                "query": read_books_genres,
+                "fields": ["title^1", "author^0.75", "description^0.5"],
+                "type": "best_fields",
+                "tie_breaker": 0.3,
+                "boost": 1.0
+            }
+        })
 
     """
     term_frequency = calculate_term_frequency(query_text, past_queries)
@@ -124,52 +145,17 @@ def generic_search(query_text, sia):
         print("No results found for that query.")
         return
 
-    sorted_results = ranking_algorithm(res, query_text, sia, reviews = reviews_flag)
+    ranking = ranking_algorithm(res, query_text, sia, reviews = reviews_flag)
+    sorted_results = ranking[0]
+    review_books = ranking[1]
     log_search_query(USER_ID, f"[generic] {query_text}")
     print("\n====================================================")
     print("|                Generic Search Results            |")
     print("====================================================")
     for i, book in enumerate(sorted_results):
-        print(f"{i}. {book[0]} with score {book[1]}")
+        #print(f"{book[0]}*{book[1]:.2f}*{review_books[book[0]]}")
+        print(f"{i+1: }{book[0]}")
     
-    '''
-    hits = res["hits"]["hits"]
-    if hits:
-        print("\n====================================================")
-        print("|                Generic Search Results            |")
-        print("====================================================")
-        for i, hit in enumerate(hits, 1):
-            print(f"{i}. {hit['_source'].get('title', 'No Title')} by {hit['_source'].get('author', 'Unknown Author')}")
-        log_search_query(USER_ID, f"[generic] {query_text}")
-    else:
-        print("No results found for that query.")
-    '''
-
-def search_book(title):
-    res = es.search(index=INDEX_NAME, query={"match": {"title": title}}, size=RETRIEVAL_SIZE)
-    hits = res["hits"]["hits"]
-    if hits:
-        print("\n====================================================")
-        print("|                  Search Results                  |")
-        print("====================================================")
-        for i, hit in enumerate(hits, 1):
-            print(f"{i}. {hit['_source'].get('title', 'No Title')} by {hit['_source'].get('author', 'Unknown Author')}")
-        log_search_query(USER_ID, title)
-    else:
-        print("No results found for that title.")
-
-def search_by_description_keyword(keyword):
-    res = es.search(index=INDEX_NAME, query={"match": {"description": keyword}}, size=RETRIEVAL_SIZE)
-    hits = res["hits"]["hits"]
-    if hits:
-        print("\n====================================================")
-        print("|      Books Matching Description or Review        |")
-        print("====================================================")
-        for i, hit in enumerate(hits, 1):
-            print(f"{i}. {hit['_source'].get('title', 'No Title')}")
-        log_search_query(USER_ID, f"[desc] {keyword}")
-    else:
-        print("No books found with that word in the description.")
 
 def search_by_author(author_name):
     res = es.search(index=INDEX_NAME, query={"match": {"author": author_name}}, size=RETRIEVAL_SIZE)
@@ -184,7 +170,9 @@ def search_by_author(author_name):
     else:
         print("No books found by that author.")
 
-
+def get_book_genre(title):
+    res = es.search(index=INDEX_NAME, query={"match": {"title": title}}, size=1)
+    return res["hits"]["hits"][0]["_source"]["genres"]
 
 """
     Adding into Database
@@ -215,9 +203,9 @@ def log_search_query(user_id, query):
     Retrieving Information from Database
 """
 def retrieve_user_information(user_id):
-    cursor.execute("SELECT title, timestamp FROM books_read WHERE user_id = %s ORDER BY timestamp DESC", (USER_ID,))
+    cursor.execute("SELECT title, timestamp FROM books_read WHERE user_id = %s ORDER BY timestamp DESC", (str(USER_ID),))
     read_books_rows = cursor.fetchall()
-    cursor.execute("SELECT * FROM search_history WHERE user_id = %s", (user_id,))
+    cursor.execute("SELECT query, timestamp FROM search_history WHERE user_id = %s", (user_id,))
     past_queries_rows = cursor.fetchall()
     user_info = {
         "read_books": [
@@ -229,7 +217,6 @@ def retrieve_user_information(user_id):
             for query, timestamp in past_queries_rows
         ]
     }
-    print(user_info)
     return user_info
 
 def fetch_user_search_history(user_id):
@@ -282,7 +269,7 @@ def login():
         return False
 
 def view_read_books(user_id):
-    cursor.execute("SELECT title, timestamp FROM books_read WHERE user_id = %s ORDER BY timestamp DESC", (user_id,))
+    cursor.execute("SELECT title, timestamp FROM books_read WHERE user_id = %s ORDER BY timestamp DESC", (str(USER_ID),))
     rows = cursor.fetchall()
     if rows:
         print("\n====================================================")
@@ -302,33 +289,33 @@ def user_menu():
         print("|                      Menu                        |")
         print("====================================================")
         print("1. Generic search")
-        print("2. Search for a book by title")
-        print("3. Search for a keyword in description or reviews")
-        print("4. Search by author name")
-        print("5. Add a book you've read")
-        print("6. View your read books")
-        print("7. Logout")
+        print("2. Search by author name")
+        print("3. Add a book you've read")
+        print("4. View your read books")
+        print("5. Logout")
         choice = input("Enter your choice (1-6): ").strip()
 
         if choice == "1":
             keyword = input("Generic search: ").strip()
             generic_search(keyword, sia)
-        if choice == "2":
-            title = input("Enter the book title to search: ").strip()
-            search_book(title)
-        elif choice == "3":
-            keyword = input("Enter a keyword to search in book descriptions and reviews: ").strip()
-            search_by_description_keyword(keyword)
-        elif choice == "4":
+        elif choice == "2":
             author = input("Enter the author's name: ").strip()
             search_by_author(author)
-        elif choice == "5":
+        elif choice == "3":
             title = input("Enter the title of the book you read: ").strip()
             add_read_book(title)
-        elif choice == "6":
-            view_read_books(USER_ID)
-            print(retrieve_user_information(USER_ID))
-        elif choice == "7":
+        elif choice == "4":
+            
+            output = retrieve_user_information(USER_ID)
+            print("Books Read:")
+            for book in output['read_books']:
+                print(f"  - {book['title']} (at {book['timestamp']})")
+
+            print("\nSearch History:")
+            for query in output['search_queries']:
+                print(f"  - \"{query['query']}\" at {query['timestamp']}")
+
+        elif choice == "5":
             print("Logging out...\n")
             break
         else:
@@ -360,10 +347,10 @@ def generate_bulk_actions(file_path):
         while True:
             action_line = f.readline()
             if not action_line:
-                break  # EOF
+                break
             doc_line = f.readline()
             if not doc_line:
-                break  # Incomplete pair
+                break
             try:
                 action = json.loads(action_line)
                 doc = json.loads(doc_line)
@@ -372,7 +359,7 @@ def generate_bulk_actions(file_path):
                     "_source": doc
                 }
             except json.JSONDecodeError:
-                continue  # Skip malformed entries
+                continue
 
 
 
@@ -400,7 +387,7 @@ def get_docs_reviews(es_query_result, sia):
 def get_cosine_similarity_docs(queryText,docs):
     return scoring_algorithm.semanticScore(queryText,docs)
 
-def add_reviews_factor(corpus, reviews_books, weight_factor = 0.4):
+def add_reviews_factor(corpus, reviews_books, weight_factor = 0.2):
     final_recommendation = dict()
     for sim, score in corpus:
         title = sim['title']
@@ -430,7 +417,7 @@ def ranking_algorithm(es_query, queryText, sia, reviews = True):
         sorted_results = [(book['title'], score)for book, score in similar]
 
     
-    return sorted_results
+    return sorted_results, reviews_books
     
 
 

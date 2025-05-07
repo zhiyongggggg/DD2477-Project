@@ -61,6 +61,10 @@ PUT /goodread
 6. Install the necessary libraries: (use this version to ensure consistency)
 ```bash
 pip install --upgrade elasticsearch==8.13.0 
+pip install sentence-transformers
+pip install psycopg2
+pip install "numpy<2"
+pip install nltk
 ```
 7. Proceed to run the **populate_index.py** file after you have pasted in your API Key. This will import data into the index from our output folder.
 8. To view the index, in the search bar at the top, search for "Index Management" and open it.
@@ -84,12 +88,8 @@ docker exec -it books_postgres psql -U user -d books_db
 
 ### Step 1: Setting Up and Populating Index
 
-1. Install the necessary libraries:
-```bash
-pip install psycopg2
-```
-2. Replace the **API Key** and **INDEX_NAME** with your own.
-3. Run the **populate_index.py** code, this will populate the index with the metadatas. (Make sure to only execute this code once or there will be duplicate entries in the Index)
+1. Replace the **API Key** and **INDEX_NAME** with your own.
+2. Run the **populate_index.py** code, this will populate the index with the metadatas. (Make sure to only execute this code once or there will be duplicate entries in the Index)
 
 ### Step 2: Running the code
 
