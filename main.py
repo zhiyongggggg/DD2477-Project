@@ -30,7 +30,6 @@ conn = psycopg2.connect(
 )
 cursor = conn.cursor()
 
-
 """
     Searches
 """
@@ -52,7 +51,11 @@ def calculate_term_frequency(current_query, past_queries):
 
     return term_frequency
 
-def generic_search(query_text):
+def generic_search(query_text, sia):
+
+    reviews_flag = True
+    historic_flag = True
+
     cursor.execute("SELECT query FROM search_history WHERE user_id = %s ORDER BY timestamp DESC LIMIT 5", (USER_ID,))
     rows = cursor.fetchall()
 
@@ -74,8 +77,12 @@ def generic_search(query_text):
               "tie_breaker": 0.3,
               "boost":   1.0
             }
-          },
-          {   # only past queries — half weight
+          }#
+        ]
+      }
+    }
+
+    historic = {   # only past queries — half weight
             "multi_match": {
               "query":  historical_text,
               "fields": ["title^1","author^0.75","description^0.5"],
@@ -84,9 +91,8 @@ def generic_search(query_text):
               "boost":  1.0
             }
           }
-        ]
-      }
-    }
+    if historic:
+        es_query['bool']['should'].append(historic)
     # End of historical data to query block
 
     """
@@ -113,6 +119,20 @@ def generic_search(query_text):
         size=RETRIEVAL_SIZE
     )
 
+    
+    if not res:
+        print("No results found for that query.")
+        return
+
+    sorted_results = ranking_algorithm(res, query_text, sia, reviews = reviews_flag)
+    log_search_query(USER_ID, f"[generic] {query_text}")
+    print("\n====================================================")
+    print("|                Generic Search Results            |")
+    print("====================================================")
+    for i, book in enumerate(sorted_results):
+        print(f"{i}. {book[0]} with score {book[1]}")
+    
+    '''
     hits = res["hits"]["hits"]
     if hits:
         print("\n====================================================")
@@ -123,6 +143,7 @@ def generic_search(query_text):
         log_search_query(USER_ID, f"[generic] {query_text}")
     else:
         print("No results found for that query.")
+    '''
 
 def search_book(title):
     res = es.search(index=INDEX_NAME, query={"match": {"title": title}}, size=RETRIEVAL_SIZE)
@@ -273,6 +294,9 @@ def view_read_books(user_id):
         print("You have not added any books yet.")
 
 def user_menu():
+    # Initialization Sentiment Analyzer
+    sia = initializeLexicon()
+
     while True:
         print("\n====================================================")
         print("|                      Menu                        |")
@@ -288,7 +312,7 @@ def user_menu():
 
         if choice == "1":
             keyword = input("Generic search: ").strip()
-            generic_search(keyword)
+            generic_search(keyword, sia)
         if choice == "2":
             title = input("Enter the book title to search: ").strip()
             search_book(title)
@@ -311,6 +335,7 @@ def user_menu():
             print("Invalid choice. Please enter a number from 1 to 6.")    
 
 def main():
+
     while True:
         print("\n====================================================")
         print("|              Welcome to Book Tracker             |")
@@ -360,44 +385,67 @@ def isDataBase(INPUT_FILE, INDEX_NAME):
         print(f"Index {INDEX_NAME} already exists. Skipping bulp upload")
 
 
+def get_docs_reviews(es_query_result, sia):
+    docs = []
+    reviews_books = dict()
+    for hit in es_query_result["hits"]["hits"]:
+        main_body_book = hit["_source"]
+        title = main_body_book['title']
+        reviews = main_body_book['reviews']
+        docs.append(main_body_book)
+        score_sentiment = scoring_algorithm.get_general_sentiment(sia, reviews)
+        reviews_books[title] = score_sentiment
+    return docs, reviews_books
+
+def get_cosine_similarity_docs(queryText,docs):
+    return scoring_algorithm.semanticScore(queryText,docs)
+
+def add_reviews_factor(corpus, reviews_books, weight_factor = 0.4):
+    final_recommendation = dict()
+    for sim, score in corpus:
+        title = sim['title']
+        final_score = score + reviews_books[title] * score * weight_factor
+        final_recommendation[title] = final_score
+    
+    sorted_results = sorted(final_recommendation.items(), key = lambda x: x[1], reverse=True)
+    return sorted_results
+
+def initializeLexicon():
+    return scoring_algorithm.initializeLexicon()
+
+def ranking_algorithm(es_query, queryText, sia, reviews = True):
+    docs = []
+    reviews_books = dict()
+    #sia = scoring_algorithm.initializeLexicon()
+
+    # Get the documents and the reviews per book 
+    docs, reviews_books = get_docs_reviews(es_query, sia)
+
+    # Then we perform cosine similarity in between the queryText and all the highest ranked documents
+    similar = get_cosine_similarity_docs(queryText, docs)
+
+    if reviews:
+        sorted_results = add_reviews_factor(similar, reviews_books, 0.4)
+    else:
+        sorted_results = [(book['title'], score)for book, score in similar]
+
+    
+    return sorted_results
+    
+
+
 if __name__ == "__main__":
     # Make sure the input file in docker exists
     isDataBase(INPUT_FILE, INDEX_NAME)
 
     # Test the current ranking algorithm
-    queryText = 'zombie'
-    queryElastic = Query(queryText)
+    #queryText = 'Cowboys'
+    #queryElastic = Query(queryText)
 
     # First we let Elastic Search use its scoring system "BM25" and get the highest ranked 30 results
-    res = es.search(index=INDEX_NAME, body=queryElastic.getQuery(), size=30)
-    docs = []
+    #res = es.search(index=INDEX_NAME, body=queryElastic.getQuery(), size=50)
+    #sorted_results = ranking_algorithm(res, queryText, reviews = True)
 
-    # We save this results on an list
-    for hit in res["hits"]["hits"]:
-        docs.append(hit["_source"])
-        print(f"{hit['_source']['title']} has the score {hit['_score']:.4f}")
+    #print(sorted_results)
 
-    # Then we perform cosine similarity in between the queryText and all the highest ranked documents
-    # The final 'similar' variable is already sorted
-    similar = scoring_algorithm.semanticScore(queryText,docs)
-    print("''''''''''''''''''''''''''''''''''''''''")
-
-    # We print the sorted results
-    for sim, score in similar:
-        print(f"The title '{sim['title']}' received a score of {score}")
-
-
-    #main()
-
-
-"""
-Things to implement
-    
-Must do:
-    * Incorporate the historical index scoring with the score of the user's input
-    * Incorporate reviews into the searching terms (that can be done in the querying file 'NumericalFieldRanking')
-Should do:
-    * 
-Nice to do:
-    * GUI for the project
-    """
+    main()
